@@ -12,3 +12,9 @@ pactl load-module module-jack-sink client_name=discord_out channels=2 connect=0
 
 jack_connect discord_out:front-left system:playback_1
 jack_connect discord_out:front-right system:playback_2
+
+# Mic
+pactl load-module module-jack-source client_name=mic_in channels=2 connect=0
+
+jack_connect system:capture_1 mic_in:front-left
+jack_connect system:capture_1 mic_in:front-right
