@@ -1,4 +1,3 @@
-#!/usr/bin/python3
 from pymouse import PyMouseEvent
 from pykeyboard import PyKeyboard
 
