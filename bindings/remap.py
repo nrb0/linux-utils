@@ -1,3 +1,5 @@
+#!/usr/bin/env python
+
 from pymouse import PyMouseEvent
 from pykeyboard import PyKeyboard
 
