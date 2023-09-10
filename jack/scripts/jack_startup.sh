@@ -28,3 +28,6 @@ jack_connect jack_loopback:front-left discord_out:front-left
 jack_connect jack_loopback:front-right discord_out:front-right
 
 pactl load-module module-loopback latency_msec=1
+
+# DAW
+pactl load-module module-jack-source client_name=daw_out channels=2 connect=0
