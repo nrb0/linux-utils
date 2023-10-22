@@ -1,0 +1,4 @@
+#!/bin/bash
+/usr/sbin/grub-reboot "Windows Boot Manager (on /dev/nvme1n1p1)"
+/usr/bin/grub-editenv /boot/grub/grubenv set saved_entry="osprober-efi-92C7-3320"
+/sbin/reboot

@@ -1,0 +1,8 @@
+[Desktop Entry]
+Encoding=UTF-8
+Version=1.0
+Type=Application
+Terminal=false
+Exec=sudo /opt/reboot-into-windows
+Name=Reboot in Windows
+Icon=/usr/share/icons/breeze-dark/preferences/32/../../../breeze/preferences/32/preferences-system-network-share-windows.svg
