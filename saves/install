@@ -1,0 +1,109 @@
+#!/usr/bin/python3
+
+from pathlib import Path
+
+import os
+import shutil
+import subprocess
+
+#-------------------------------------------------------------------------------
+
+AppName = 'copy-saves'
+Manufacturer = 'nrbo'
+
+userHomeDirectory = Path(os.getenv("HOME"))
+userBinaryDirectory = userHomeDirectory / ".local" / "bin"
+appRelativePath = Path(AppName)
+appInstallationPath = userBinaryDirectory / AppName
+
+#-------------------------------------------------------------------------------
+
+def checkFilesToBeInstalled():
+    if not appRelativePath.exists():
+        print("Error: couldn't find the file to install")
+        print("Please make sure you run this script from the directory "\
+              "where \'" + AppName + "\' is located")
+        exit()
+
+#-------------------------------------------------------------------------------
+
+def checkDestination():
+    if not userBinaryDirectory.exists():
+        print("Error: installation destination is missing")
+        exit()
+
+#-------------------------------------------------------------------------------
+
+def copyAppFile(isForced):
+    checkFilesToBeInstalled()
+    checkDestination()
+
+    shutil.copyfile(appRelativePath, appInstallationPath)
+    print("* Installed " + AppName)
+
+#-------------------------------------------------------------------------------
+
+def getCrontabListOutput():
+    crontabList = subprocess.run(["crontab", "-l"],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT)
+
+    return str(crontabList.stdout.decode("utf-8"))
+
+#-------------------------------------------------------------------------------
+
+def hasAppCronTask(crontabOutput):
+    return crontabOutput.find("~/.local/bin/copy-saves") != -1
+
+#-------------------------------------------------------------------------------
+
+def removeAppCronTask(crontabListArray):
+    newCrontabListArray = []
+    for line in crontabListArray:
+        if not hasAppCronTask(line):
+            newCrontabListArray.append(line)
+
+    return newCrontabListArray
+
+#-------------------------------------------------------------------------------
+
+def setCrontabList(crontabListAsArray):
+    # Convert array back to a string with a trailing new line
+    newCrontab = '\n'.join(crontabListAsArray) + '\n'
+
+    crontabProcess = subprocess.Popen(['crontab', '-'],
+        stdin=subprocess.PIPE)
+    crontabProcess.communicate(input=bytes(newCrontab, 'utf-8'))
+
+#-------------------------------------------------------------------------------
+
+def appendAppCronTasks(crontabListAsArray):
+    crontabListAsArray.append("0 * * * * ~/.local/bin/copy-saves")
+    return crontabListAsArray
+
+#-------------------------------------------------------------------------------
+
+def updateCronTasks(isForced):
+    crontabListOutput = getCrontabListOutput()
+    crontabListAsArray = crontabListOutput.rstrip().splitlines()
+    isInstalled = hasAppCronTask(crontabListOutput)
+
+    if isInstalled and isForced:
+        crontabListAsArray = removeAppCronTask(crontabListAsArray)
+
+    if not isInstalled or shouldForceInstall:
+        crontabListAsArray = appendAppCronTasks(crontabListAsArray)
+        setCrontabList(crontabListAsArray)
+        print("* Cron task installed")
+    else:
+        print("* Cron task already installed, skipping cron configuration")
+
+#-------------------------------------------------------------------------------
+# MAIN
+#-------------------------------------------------------------------------------
+
+if __name__ == '__main__':
+    shouldForceInstall = True
+
+    copyAppFile(shouldForceInstall)
+    updateCronTasks(shouldForceInstall)

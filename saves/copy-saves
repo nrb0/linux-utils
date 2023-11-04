@@ -1,0 +1,139 @@
+#!/usr/bin/python3
+
+from pathlib import Path
+
+import json
+import logging
+import os
+import shutil
+import subprocess
+
+#-------------------------------------------------------------------------------
+
+# Global names
+AppName = 'copy-saves'
+Manufacturer = 'nrbo'
+
+# Global paths
+userHomeDirectory = Path(os.getenv("HOME"))
+userConfigDirectory = userHomeDirectory / ".config"
+manufacturerConfigDirectory = userConfigDirectory / "nrbo"
+appConfigDirectory = manufacturerConfigDirectory / AppName
+appConfigFile = appConfigDirectory / "config.json"
+appLogFile = appConfigDirectory / (AppName + ".log")
+
+#-------------------------------------------------------------------------------
+
+supportedApps = ["bg3", "wow_classic_era"]
+supportedAppNames = {
+    "bg3": "Baldur's Gate 3",
+    "wow_classic_era": "WoW (Classic era)"
+}
+
+#-------------------------------------------------------------------------------
+
+def readConfig():
+    if not appConfigFile.exists():
+        return {}
+
+    with open(appConfigFile, 'r') as openedFile:
+        jsonObject = json.load(openedFile)
+        return jsonObject
+
+    return {}
+
+#-------------------------------------------------------------------------------
+
+# Create app directory
+appConfigDirectory.mkdir(parents=True, exist_ok=True)
+config = readConfig()
+
+# Create logger
+log = logging.getLogger(AppName)
+log.setLevel(logging.DEBUG)
+
+# Create formatter and add it to the handlers
+formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
+
+# Create file handler which logs even debug messages
+fileHandler = logging.FileHandler(appLogFile)
+fileHandler.setLevel(logging.DEBUG)
+fileHandler.setFormatter(formatter)
+log.addHandler(fileHandler)
+
+# Create console handler with a higher log level
+consoleHandler = logging.StreamHandler()
+consoleHandler.setLevel(logging.ERROR)
+consoleHandler.setFormatter(formatter)
+log.addHandler(consoleHandler)
+
+#-------------------------------------------------------------------------------
+
+def writeConfig(config):
+    jsonObject = json.dumps(config, indent=4)
+    with open(appConfigFile, "w") as outputFile:
+        outputFile.write(jsonObject)
+
+#-------------------------------------------------------------------------------
+
+def copyDirectory(sourcePath, destinationPath):
+    rsyncProcess = subprocess.run(["rsync", "-Pav", sourcePath, destinationPath],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT)
+
+    outputString = str(rsyncProcess.stdout.decode("utf-8"))
+    log.info(outputString)
+
+#-------------------------------------------------------------------------------
+
+def processSaves(config):
+    for supportedApp in supportedApps:
+        if supportedApp in config:
+            processApp(supportedApp, config[supportedApp])
+
+#-------------------------------------------------------------------------------
+
+def processApp(app, config):
+    appName = supportedAppNames[app]
+    log.info("Processing " + appName)
+    isMalformed = False
+    if not "installation" in config:
+        log.error("Missing 'installation' field")
+        log.info("Skipping " + appName)
+        return
+
+    if not "backup" in config:
+        log.error("Missing 'backup' field")
+        log.info("Skipping " + appName)
+        return
+
+    installationPath = Path(config['installation'])
+    if not installationPath.exists():
+        log.error("Installation path does not exist")
+        log.error("\"" + str(installationPath) + "\" not found!")
+        log.info("Skipping " + appName)
+        return
+
+    backupPath = Path(config['backup'])
+    if not backupPath.exists():
+        log.error("Backup path does not exist")
+        log.error("\"" + str(backupPath) + "\" not found!")
+        log.info("Skipping " + appName)
+        return
+
+    copyDirectory(installationPath, backupPath)
+
+#-------------------------------------------------------------------------------
+# MAIN
+#-------------------------------------------------------------------------------
+
+if __name__ == '__main__':
+    log.info("Starting copy-saves")
+
+    processSaves(config)
+
+    log.info("All copy-saves tasks done!")
+
+    for handler in log.handlers:
+        handler.close()
+        log.removeFilter(handler)
