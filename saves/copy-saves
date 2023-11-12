@@ -1,7 +1,9 @@
 #!/usr/bin/python3
 
+from datetime import datetime
 from pathlib import Path
 
+import argparse
 import json
 import logging
 import os
@@ -22,13 +24,10 @@ appConfigDirectory = manufacturerConfigDirectory / AppName
 appConfigFile = appConfigDirectory / "config.json"
 appLogFile = appConfigDirectory / (AppName + ".log")
 
-#-------------------------------------------------------------------------------
-
-supportedApps = ["bg3", "wow_classic_era"]
-supportedAppNames = {
-    "bg3": "Baldur's Gate 3",
-    "wow_classic_era": "WoW (Classic era)"
-}
+backupsTag = "backups"
+destinationTag = "destination"
+nameTag = "name"
+sourceTag = "source"
 
 #-------------------------------------------------------------------------------
 
@@ -44,9 +43,17 @@ def readConfig():
 
 #-------------------------------------------------------------------------------
 
+def writeConfig():
+    jsonObject = json.dumps(globalConfiguration, indent=4)
+    with open(appConfigFile, "w") as outputFile:
+        outputFile.write(jsonObject)
+
+
+#-------------------------------------------------------------------------------
+
 # Create app directory
 appConfigDirectory.mkdir(parents=True, exist_ok=True)
-config = readConfig()
+globalConfiguration = readConfig()
 
 # Create logger
 log = logging.getLogger(AppName)
@@ -69,13 +76,6 @@ log.addHandler(consoleHandler)
 
 #-------------------------------------------------------------------------------
 
-def writeConfig(config):
-    jsonObject = json.dumps(config, indent=4)
-    with open(appConfigFile, "w") as outputFile:
-        outputFile.write(jsonObject)
-
-#-------------------------------------------------------------------------------
-
 def copyDirectory(sourcePath, destinationPath):
     rsyncProcess = subprocess.run(["rsync", "-Pav", sourcePath, destinationPath],
             stdout=subprocess.PIPE,
@@ -86,51 +86,74 @@ def copyDirectory(sourcePath, destinationPath):
 
 #-------------------------------------------------------------------------------
 
-def processSaves(config):
-    for supportedApp in supportedApps:
-        if supportedApp in config:
-            processApp(supportedApp, config[supportedApp])
+def processSaves():
+    if backupsTag in globalConfiguration:
+        backupTasks = globalConfiguration[backupsTag]
+        for backupTask in backupTasks:
+            processTask(backupTask)
 
 #-------------------------------------------------------------------------------
 
-def processApp(app, config):
-    appName = supportedAppNames[app]
-    log.info("Processing " + appName)
+def processTask(taskConfiguration):
     isMalformed = False
-    if not "installation" in config:
-        log.error("Missing 'installation' field")
-        log.info("Skipping " + appName)
+    if not nameTag in taskConfiguration:
+        log.error("Missing \'{}\' field in configuration".format(nameTag))
+        log.info("Skipping...")
         return
 
-    if not "backup" in config:
-        log.error("Missing 'backup' field")
-        log.info("Skipping " + appName)
+    taskName = taskConfiguration[nameTag]
+    log.info("Processing " + taskName)
+
+    if not sourceTag in taskConfiguration:
+        log.error("Missing \'{}\' field in configuration".format(sourceTag))
+        log.info("Skipping {}".format(taskName))
         return
 
-    installationPath = Path(config['installation'])
-    if not installationPath.exists():
-        log.error("Installation path does not exist")
-        log.error("\"" + str(installationPath) + "\" not found!")
-        log.info("Skipping " + appName)
+    if not destinationTag in taskConfiguration:
+        log.error("Missing \'{}\' field in configuration".format(destinationTag))
+        log.info("Skipping {}".format(taskName))
         return
 
-    backupPath = Path(config['backup'])
-    if not backupPath.exists():
-        log.error("Backup path does not exist")
-        log.error("\"" + str(backupPath) + "\" not found!")
-        log.info("Skipping " + appName)
+    sourcePath = Path(taskConfiguration[sourceTag])
+    if not sourcePath.exists():
+        log.error("Source path does not exist")
+        log.error("\"{}\" not found!".format(str(sourcePath)))
+        log.info("Skipping {}".format(taskName))
         return
 
-    copyDirectory(installationPath, backupPath)
+    destinationPath = Path(taskConfiguration[destinationTag])
+    if not destinationPath.exists():
+        log.error("Destination path does not exist")
+        log.error("\"{}\" not found!".format(str(destinationPath)))
+        log.info("Skipping {}".format(taskName))
+        return
+
+    processDirectory(sourcePath, destinationPath)
+
+#-------------------------------------------------------------------------------
+
+def processDirectory(sourcePath, destinationParentPath):
+    nowString = datetime.now().strftime("%Y-%m-%d-%H-%M-%S")
+    copyDirectory(sourcePath, destinationParentPath)
+
 
 #-------------------------------------------------------------------------------
 # MAIN
 #-------------------------------------------------------------------------------
 
 if __name__ == '__main__':
+    parser = argparse.ArgumentParser(description='Backs up directories')
+    parser.add_argument('--verbose', '-v', action='count', default=0)
+    args = parser.parse_args()
+
+    if args.verbose == 1:
+        consoleHandler.setLevel(logging.INFO)
+    elif args.verbose >= 2:
+        consoleHandler.setLevel(logging.DEBUG)
+
     log.info("Starting copy-saves")
 
-    processSaves(config)
+    processSaves()
 
     log.info("All copy-saves tasks done!")
 
