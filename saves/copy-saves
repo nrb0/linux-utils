@@ -1,6 +1,6 @@
 #!/usr/bin/python3
 
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 
 import argparse
@@ -9,6 +9,7 @@ import logging
 import os
 import shutil
 import subprocess
+import sys
 
 #-------------------------------------------------------------------------------
 
@@ -24,10 +25,16 @@ appConfigDirectory = manufacturerConfigDirectory / AppName
 appConfigFile = appConfigDirectory / "config.json"
 appLogFile = appConfigDirectory / (AppName + ".log")
 
+# Global variables
 backupsTag = "backups"
 destinationTag = "destination"
 nameTag = "name"
 sourceTag = "source"
+rcloneConfigurationTag = "rclone-config"
+remoteTag = "remote"
+sftpPathOverrideTag = "sftp-path-override"
+
+dateFormat = "%Y-%m-%d-%H-%M-%S"
 
 #-------------------------------------------------------------------------------
 
@@ -76,13 +83,52 @@ log.addHandler(consoleHandler)
 
 #-------------------------------------------------------------------------------
 
-def copyDirectory(sourcePath, destinationPath):
+def copyDirectoryWithRsync(sourcePath, destinationPath, printResult=True):
     rsyncProcess = subprocess.run(["rsync", "-Pav", sourcePath, destinationPath],
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT)
 
     outputString = str(rsyncProcess.stdout.decode("utf-8"))
+
+    if printResult:
+        log.info(outputString)
+
+    hasCopied = False
+    lines = outputString.splitlines()
+    for line in outputString.splitlines():
+        if line.startswith(sourcePath.stem):
+            hasCopied = True
+
+    return hasCopied
+
+#-------------------------------------------------------------------------------
+
+def copyDirectoryWithRclone(sourcePath, destinationPath, rcloneConfiguration):
+    if not remoteTag in rcloneConfiguration:
+        log.error("Missing \'{}\' field in rclone configuration".format(remoteTag))
+        log.info("Skipping...")
+        return False
+
+    actualDestinationPath = "{}:{}".format(rcloneConfiguration[remoteTag], destinationPath)
+
+    rcloneCommand = ["rclone", "bisync", "-v" ,sourcePath, actualDestinationPath]
+    if sftpPathOverrideTag in rcloneConfiguration:
+        rcloneCommand.append("--sftp-path-override")
+        rcloneCommand.append(rcloneConfiguration[sftpPathOverrideTag])
+
+    rcloneProcess = subprocess.run(rcloneCommand, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+
+    outputString = str(rcloneProcess.stdout.decode("utf-8"))
     log.info(outputString)
+
+    hasCopied = True
+    lines = outputString.splitlines()
+    for line in outputString.splitlines():
+        if line.endswith("No changes found") or line.startswith("Error:"):
+            hasCopied = False
+            break
+
+    return hasCopied
 
 #-------------------------------------------------------------------------------
 
@@ -121,21 +167,160 @@ def processTask(taskConfiguration):
         log.info("Skipping {}".format(taskName))
         return
 
+    rcloneConfiguration = taskConfiguration[rcloneConfigurationTag] if rcloneConfigurationTag in taskConfiguration else None
+
     destinationPath = Path(taskConfiguration[destinationTag])
-    if not destinationPath.exists():
+    if not rcloneConfiguration and not destinationPath.exists():
         log.error("Destination path does not exist")
         log.error("\"{}\" not found!".format(str(destinationPath)))
         log.info("Skipping {}".format(taskName))
         return
 
-    processDirectory(sourcePath, destinationPath)
+    processDirectory(taskName, sourcePath, destinationPath, rcloneConfiguration)
 
 #-------------------------------------------------------------------------------
 
-def processDirectory(sourcePath, destinationParentPath):
-    nowString = datetime.now().strftime("%Y-%m-%d-%H-%M-%S")
-    copyDirectory(sourcePath, destinationParentPath)
+def processDirectory(taskName, sourcePath, destinationParentPath, rcloneConfiguration):
+    log.info("Copying {} to destination".format(taskName))
+    hasCopied = False
 
+    if rcloneConfiguration:
+        hasCopied = copyDirectoryWithRclone(sourcePath, destinationParentPath, rcloneConfiguration)
+    else:
+        hasCopied = copyDirectoryWithRsync(sourcePath, destinationParentPath)
+
+    if hasCopied:
+        log.info("Archiving {}".format(taskName))
+        archiveDirectory(taskName, sourcePath)
+
+#-------------------------------------------------------------------------------
+
+def archiveDirectory(taskName, sourcePath):
+    backupDirectory = appConfigDirectory / "Backups"
+    taskBackupDirectory = backupDirectory / taskName
+
+    nowString = datetime.now().strftime(dateFormat)
+    currentBackupDirectory = taskBackupDirectory / nowString
+    currentBackupDirectory.mkdir(parents=True, exist_ok=True)
+
+    copyDirectoryWithRsync(sourcePath, currentBackupDirectory, False)
+    cleanBackupDirectory(taskBackupDirectory)
+
+#-------------------------------------------------------------------------------
+
+def getDirectoryWithNameBetweenDate(directories, startDate, endDate):
+    matchingDirectories = []
+
+    for directory in directories:
+        try:
+            directoryDate = datetime.strptime(directory.stem, dateFormat)
+            if directoryDate >= startDate and directoryDate < endDate:
+                matchingDirectories.append(directory)
+        except:
+            continue
+
+    return matchingDirectories
+
+#-------------------------------------------------------------------------------
+
+# This version only keeps 1 version per-day, with the exception of the current day where everything is kept
+def filterDirectories1PerDay(directories):
+    now = datetime.now()
+
+    directoriesToKeep = []
+    directoriesToRemove = []
+    directoriesNotConsidered = []
+
+    directories.sort(reverse=True)
+
+    directoriesWithDate = []
+    for directory in directories:
+            try:
+                directoryDate = datetime.strptime(directory.stem, dateFormat)
+                directoriesWithDate.append(directory)
+            except:
+                continue
+
+    currentEndDate = now.replace(hour = 0, minute = 0, second = 0, microsecond = 0) + timedelta(days=1)
+    while(len(directoriesWithDate) != 0):
+        startDate = currentEndDate - timedelta(days=1)
+        matchingDirectories = getDirectoryWithNameBetweenDate(directoriesWithDate, startDate, currentEndDate)
+
+        if len(matchingDirectories) > 0:
+            if currentEndDate > now:
+                directoriesToKeep.extend(matchingDirectories)
+            else:
+                directoriesToKeep.append(matchingDirectories[0])
+                directoriesToRemove.extend(matchingDirectories[1:])
+
+        for matchingDirectory in matchingDirectories:
+            directoriesWithDate.remove(matchingDirectory)
+
+        currentEndDate -= timedelta(days=1)
+
+    for directory in directories:
+        if directory not in directoriesToKeep and directory not in directoriesToRemove:
+            directoriesNotConsidered.append(directory)
+
+    return directoriesToKeep, directoriesToRemove, directoriesNotConsidered
+
+#-------------------------------------------------------------------------------
+
+# This version removes directories the further they are in time, past 1 year directories are simply kept
+def filterDirectoriesOverTime(directories):
+    now = datetime.now()
+    dates = [
+        now - timedelta(minutes=1),
+        now - timedelta(hours=1),
+        now - timedelta(days=1),
+        now - timedelta(days=30),
+        now - timedelta(days=365)
+    ]
+
+    directoriesToKeep = []
+    directoriesToRemove = []
+    directoriesNotConsidered = []
+
+    directories.sort(reverse=True)
+
+    for startDate in dates:
+        matchingDirectories = getDirectoryWithNameBetweenDate(directories, startDate, now)
+        numDirectories = len(matchingDirectories)
+        maxDirectoriesToKeep = 15
+
+        if numDirectories >= maxDirectoriesToKeep:
+            step = (numDirectories + (maxDirectoriesToKeep - 1) - 1) // (maxDirectoriesToKeep - 1) # ceil division
+
+            for index in range(0, numDirectories):
+                if index % step == 0:
+                    directoriesToKeep.append(matchingDirectories[index])
+                else:
+                    directoriesToRemove.append(matchingDirectories[index])
+        elif numDirectories > 0:
+            for matchingDirectory in matchingDirectories:
+                    directoriesToKeep.append(matchingDirectory)
+
+        for matchingDirectory in matchingDirectories:
+            directories.remove(matchingDirectory)
+
+    for directory in directories:
+        directoriesNotConsidered.append(directory)
+
+    return directoriesToKeep, directoriesToRemove, directoriesNotConsidered
+
+#-------------------------------------------------------------------------------
+
+def cleanBackupDirectory(backupDirectory):
+    backupDirectories = []
+    for subfolder in os.scandir(backupDirectory):
+        if subfolder.is_dir():
+            backupDirectories.append(Path(subfolder.path))
+
+    dirsToKeep, dirsToRemove, dirsNotConsidered = filterDirectories1PerDay(backupDirectories)
+
+    for directory in dirsToRemove:
+        log.debug("Removing {}".format(directory.stem))
+        shutil.rmtree(directory)
 
 #-------------------------------------------------------------------------------
 # MAIN
