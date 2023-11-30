@@ -2,6 +2,7 @@
 
 from dataclasses import dataclass
 from datetime import datetime, timedelta
+from desktop_notifier import DesktopNotifier
 from pathlib import Path
 
 import argparse
@@ -36,6 +37,10 @@ remoteTag = "remote"
 sftpPathOverrideTag = "sftp-path-override"
 
 dateFormat = "%Y-%m-%d-%H-%M-%S"
+
+notifier = DesktopNotifier()
+
+isDryRun = False
 
 @dataclass
 class RCloneResult:
@@ -91,6 +96,10 @@ log.addHandler(consoleHandler)
 #-------------------------------------------------------------------------------
 
 def copyDirectoryWithRsync(sourcePath, destinationPath, printResult=True):
+    if isDryRun:
+        log.debug('Dry run, ignoring copy')
+        return False
+
     rsyncProcess = subprocess.run(["rsync", "-Pav", sourcePath, destinationPath],
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT)
@@ -110,9 +119,13 @@ def copyDirectoryWithRsync(sourcePath, destinationPath, printResult=True):
 
 #-------------------------------------------------------------------------------
 
-def copyDirectoryWithRclone(sourcePath, destinationPath, rcloneConfiguration):
+def copyDirectoryWithRclone(sourcePath, destinationPath, rcloneConfiguration, withResync=False):
     result = RCloneResult(False, False, False)
     result.hasCopied = False
+
+    if isDryRun:
+        log.debug('Dry run, ignoring copy')
+        return result
 
     if not remoteTag in rcloneConfiguration:
         log.error("Missing \'{}\' field in rclone configuration".format(remoteTag))
@@ -126,6 +139,9 @@ def copyDirectoryWithRclone(sourcePath, destinationPath, rcloneConfiguration):
         rcloneCommand.append("--sftp-path-override")
         rcloneCommand.append(rcloneConfiguration[sftpPathOverrideTag])
 
+    if withResync:
+        rcloneCommand.append("--resync")
+
     rcloneProcess = subprocess.run(rcloneCommand, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
 
     outputString = str(rcloneProcess.stdout.decode("utf-8"))
@@ -133,8 +149,13 @@ def copyDirectoryWithRclone(sourcePath, destinationPath, rcloneConfiguration):
 
     outputLines = outputString.splitlines()
     result.hasCopied = all(line.find("No changes found") == -1 for line in outputLines)
-    if any(line.find("Bisync successful") != -1 for line in outputLines):
+    result.mustResync = any(line.find("Must run --resync to recover") != -1 in line for line in outputLines)
+    if result.mustResync:
+        result.isSuccessful = False
+    elif any(line.find("Bisync successful") != -1 for line in outputLines):
         result.isSuccessful = True
+    else:
+        result.isSuccessful = False
 
     return result
 
@@ -194,10 +215,12 @@ def processDirectory(taskName, sourcePath, destinationParentPath, rcloneConfigur
     if rcloneConfiguration:
         rcloneResult = copyDirectoryWithRclone(sourcePath, destinationParentPath, rcloneConfiguration)
 
+        if (not rcloneResult.isSuccessful) and rcloneResult.mustResync:
+            rcloneResult = copyDirectoryWithRclone(sourcePath, destinationParentPath, rcloneConfiguration, True)
 
-    if hasCopied:
-        log.info("Archiving {}".format(taskName))
-        archiveDirectory(taskName, sourcePath)
+        if not rcloneResult.isSuccessful:
+            notifier.send_sync(title="copy-saves", message="There was an issue when saving {}".format(taskName))
+
         if (not rcloneResult.isSuccessful) or rcloneResult.hasCopied:
             log.info("Archiving {}".format(taskName))
             archiveDirectory(taskName, sourcePath)
@@ -205,6 +228,9 @@ def processDirectory(taskName, sourcePath, destinationParentPath, rcloneConfigur
 #-------------------------------------------------------------------------------
 
 def archiveDirectory(taskName, sourcePath):
+    if isDryRun:
+        return
+
     backupDirectory = appConfigDirectory / "Backups"
     taskBackupDirectory = backupDirectory / taskName
 
@@ -338,12 +364,16 @@ def cleanBackupDirectory(backupDirectory):
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Backs up directories')
     parser.add_argument('--verbose', '-v', action='count', default=0)
+    parser.add_argument('--dry-run', dest='dryrun', action='store_true')
     args = parser.parse_args()
 
     if args.verbose == 1:
         consoleHandler.setLevel(logging.INFO)
     elif args.verbose >= 2:
         consoleHandler.setLevel(logging.DEBUG)
+
+    if args.dryrun:
+        isDryRun = True
 
     log.info("Starting copy-saves")
 
