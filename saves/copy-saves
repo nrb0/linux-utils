@@ -1,5 +1,6 @@
 #!/usr/bin/python3
 
+from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -35,6 +36,12 @@ remoteTag = "remote"
 sftpPathOverrideTag = "sftp-path-override"
 
 dateFormat = "%Y-%m-%d-%H-%M-%S"
+
+@dataclass
+class RCloneResult:
+    hasCopied: bool
+    isSuccessful: bool
+    mustResync: bool
 
 #-------------------------------------------------------------------------------
 
@@ -104,10 +111,13 @@ def copyDirectoryWithRsync(sourcePath, destinationPath, printResult=True):
 #-------------------------------------------------------------------------------
 
 def copyDirectoryWithRclone(sourcePath, destinationPath, rcloneConfiguration):
+    result = RCloneResult(False, False, False)
+    result.hasCopied = False
+
     if not remoteTag in rcloneConfiguration:
         log.error("Missing \'{}\' field in rclone configuration".format(remoteTag))
         log.info("Skipping...")
-        return False
+        return result
 
     actualDestinationPath = "{}:{}".format(rcloneConfiguration[remoteTag], destinationPath)
 
@@ -121,14 +131,12 @@ def copyDirectoryWithRclone(sourcePath, destinationPath, rcloneConfiguration):
     outputString = str(rcloneProcess.stdout.decode("utf-8"))
     log.info(outputString)
 
-    hasCopied = True
-    lines = outputString.splitlines()
-    for line in outputString.splitlines():
-        if line.endswith("No changes found") or line.startswith("Error:"):
-            hasCopied = False
-            break
+    outputLines = outputString.splitlines()
+    result.hasCopied = all(line.find("No changes found") == -1 for line in outputLines)
+    if any(line.find("Bisync successful") != -1 for line in outputLines):
+        result.isSuccessful = True
 
-    return hasCopied
+    return result
 
 #-------------------------------------------------------------------------------
 
@@ -182,16 +190,17 @@ def processTask(taskConfiguration):
 
 def processDirectory(taskName, sourcePath, destinationParentPath, rcloneConfiguration):
     log.info("Copying {} to destination".format(taskName))
-    hasCopied = False
 
     if rcloneConfiguration:
-        hasCopied = copyDirectoryWithRclone(sourcePath, destinationParentPath, rcloneConfiguration)
-    else:
-        hasCopied = copyDirectoryWithRsync(sourcePath, destinationParentPath)
+        rcloneResult = copyDirectoryWithRclone(sourcePath, destinationParentPath, rcloneConfiguration)
+
 
     if hasCopied:
         log.info("Archiving {}".format(taskName))
         archiveDirectory(taskName, sourcePath)
+        if (not rcloneResult.isSuccessful) or rcloneResult.hasCopied:
+            log.info("Archiving {}".format(taskName))
+            archiveDirectory(taskName, sourcePath)
 
 #-------------------------------------------------------------------------------
 
