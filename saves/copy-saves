@@ -149,7 +149,7 @@ def copyDirectoryWithRclone(sourcePath, destinationPath, rcloneConfiguration, wi
 
     outputLines = outputString.splitlines()
     result.hasCopied = all(line.find("No changes found") == -1 for line in outputLines)
-    result.mustResync = any(line.find("Must run --resync to recover") != -1 in line for line in outputLines)
+    result.mustResync = any(line.find("Must run --resync to recover") != -1 for line in outputLines)
     if result.mustResync:
         result.isSuccessful = False
     elif any(line.find("Bisync successful") != -1 for line in outputLines):
