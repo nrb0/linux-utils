@@ -1,0 +1,31 @@
+{
+    "backups": [
+        {
+            "name": "Baldur's Gate 3",
+            "source": "/home/adrien/.var/app/com.usebottles.bottles/data/bottles/bottles/Baldur's-Gate-3/drive_c/users/steamuser/AppData/Local/Larian Studios/Baldur's Gate 3",
+            "destination": "/Saves/Baldur's Gate 3",
+            "rclone-config": {
+                "remote": "tetra",
+                "sftp-path-override": "/volume1/Saves/Baldur's Gate 3"
+            }
+        },
+        {
+            "name": "WoW (Classic Era) - Addons",
+            "source": "/home/adrien/Games/World of Warcraft/_classic_era_/Interface/AddOns",
+            "destination": "/Saves/WoW/WoW (Classic Era) - AddOns",
+            "rclone-config": {
+                "remote": "tetra",
+                "sftp-path-override": "/volume1/Saves/WoW/WoW (Classic Era) - AddOns"
+            }
+        },
+        {
+            "name": "WoW (Classic Era) - WTF",
+            "source": "/home/adrien/Games/World of Warcraft/_classic_era_/WTF",
+            "destination": "/Saves/WoW/WoW (Classic Era) - WTF/Desktop",
+            "rclone-config": {
+                "remote": "tetra",
+                "sftp-path-override": "/volume1/Saves/WoW/WoW (Classic Era) - WTF/Desktop"
+            }
+        }
+    ]
+}
