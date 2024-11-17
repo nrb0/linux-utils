@@ -134,13 +134,14 @@ def copyDirectoryWithRclone(sourcePath, destinationPath, rcloneConfiguration, wi
 
     actualDestinationPath = "{}:{}".format(rcloneConfiguration[remoteTag], destinationPath)
 
-    rcloneCommand = ["rclone", "bisync", "-v" ,sourcePath, actualDestinationPath]
+    rcloneCommand = ["rclone", "bisync", "-v", "-L", "--max-lock", "2m", "--resilient",
+        "--recover", "--conflict-resolve", "newer",sourcePath, actualDestinationPath]
     if sftpPathOverrideTag in rcloneConfiguration:
         rcloneCommand.append("--sftp-path-override")
         rcloneCommand.append(rcloneConfiguration[sftpPathOverrideTag])
 
-    if withResync:
-        rcloneCommand.append("--resync")
+    # if withResync:
+    #     rcloneCommand.append("--resync")
 
     rcloneProcess = subprocess.run(rcloneCommand, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
 
@@ -215,15 +216,15 @@ def processDirectory(taskName, sourcePath, destinationParentPath, rcloneConfigur
     if rcloneConfiguration:
         rcloneResult = copyDirectoryWithRclone(sourcePath, destinationParentPath, rcloneConfiguration)
 
-        if (not rcloneResult.isSuccessful) and rcloneResult.mustResync:
-            rcloneResult = copyDirectoryWithRclone(sourcePath, destinationParentPath, rcloneConfiguration, True)
+        # if (not rcloneResult.isSuccessful) and rcloneResult.mustResync:
+        #     rcloneResult = copyDirectoryWithRclone(sourcePath, destinationParentPath, rcloneConfiguration, True)
 
         if not rcloneResult.isSuccessful:
             notifier.send_sync(title="copy-saves", message="There was an issue when saving {}".format(taskName))
 
-        if (not rcloneResult.isSuccessful) or rcloneResult.hasCopied:
-            log.info("Archiving {}".format(taskName))
-            archiveDirectory(taskName, sourcePath)
+        # if (not rcloneResult.isSuccessful) or rcloneResult.hasCopied:
+        #     log.info("Archiving {}".format(taskName))
+        #     archiveDirectory(taskName, sourcePath)
 
 #-------------------------------------------------------------------------------
 
